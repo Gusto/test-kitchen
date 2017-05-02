@@ -158,21 +158,38 @@ module Kitchen
         def upload(locals, remote)
           logger.debug("TIMING: scp async upload (Kitchen::Transport::Ssh)")
           elapsed = Benchmark.measure do
-            waits = []
-            Array(locals).map do |local|
-              opts = File.directory?(local) ? { recursive: true } : {}
-
-              waits.push session.scp.upload(local, remote, opts) do |_ch, name, sent, total|
-                logger.debug("Async Uploaded #{name} (#{total} bytes)") if sent == total
-              end
-              waits.shift.wait while waits.length >= max_ssh_sessions
+            if options[:async]
+              upload_async(locals, remote)
+            else
+              upload_sync(locals, remote)
             end
-            waits.each(&:wait)
           end
           delta = Util.duration(elapsed.real)
           logger.debug("TIMING: scp async upload (Kitchen::Transport::Ssh) took #{delta}")
         rescue Net::SSH::Exception => ex
           raise SshFailed, "SCP upload failed (#{ex.message})"
+        end
+
+        def upload_async(locals, remote)
+          waits = []
+          Array(locals).map do |local|
+            opts = File.directory?(local) ? { recursive: true } : {}
+
+            waits.push session.scp.upload(local, remote, opts) do |_ch, name, sent, total|
+              logger.debug("Async Uploaded #{name} (#{total} bytes)") if sent == total
+            end
+            waits.shift.wait while waits.length >= max_ssh_sessions
+          end
+          waits.each(&:wait)
+        end
+
+        def upload_sync(locals, remote)
+          Array(locals).map do |local|
+            opts = File.directory?(local) ? { recursive: true } : {}
+
+            session.scp.upload!(local, remote, opts)
+            logger.debug("Uploaded #{local}")
+          end
         end
 
         # (see Base::Connection#wait_until_ready)
